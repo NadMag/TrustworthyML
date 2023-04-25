@@ -6,6 +6,8 @@ import models
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
+##TODO: Remove!
+import matplotlib.pyplot as plt
 
 def load_pretrained_cnn(cnn_id, n_classes=4, models_dir='trained-models/'):
     """
@@ -55,6 +57,7 @@ def compute_accuracy(model, data_loader, device):
 
     return (correct / total)
 
+##TODO: Assuming we should operate only on fist batch?
 def run_whitebox_attack(attack, data_loader, targeted, device, n_classes=4):
     """
     Runs the white-box attack on the labeled data returned by
@@ -66,7 +69,28 @@ def run_whitebox_attack(attack, data_loader, targeted, device, n_classes=4):
     2- True labels in case of untargeted attacks, and target labels in
        case of targeted attacks.
     """
-    pass # FILL ME
+    adv_by_batch = []
+    labels_by_batch = []
+    for images, org_labels  in data_loader:
+        images = images.to(device)
+        org_labels = org_labels.to(device)
+    
+        if (targeted == True):
+            #TODO: Check if labels are indeed in range (1, num_classes) or start at 0
+            label_pert = torch.randint_like(org_labels, 0, high=n_classes).to(device)
+            labels = torch.remainder(org_labels + label_pert, n_classes).to(device)
+        
+        else:
+            labels = org_labels
+
+        adv_images = attack.execute(images, labels, targeted)
+        adv_by_batch.append(adv_images)
+        labels_by_batch.append(labels)
+
+    total_adv_imgs = torch.cat(adv_by_batch)
+    total_labels= torch.cat(labels_by_batch)
+    return total_adv_imgs, total_labels
+    
 
 def run_blackbox_attack(attack, data_loader, targeted, device, n_classes=4):
     """
@@ -80,7 +104,31 @@ def run_blackbox_attack(attack, data_loader, targeted, device, n_classes=4):
        case of targeted attacks.
     3- The number of queries made to create each adversarial example.
     """
-    pass # FILL ME
+    adv_by_batch = []
+    labels_by_batch = []
+    queries_by_batch = []
+
+    for images, org_labels  in data_loader:
+        images = images.to(device)
+        org_labels = org_labels.to(device)
+    
+        if (targeted == True):
+            label_pert = torch.randint_like(org_labels, 0, high=n_classes).to(device)
+            labels = torch.remainder(org_labels + label_pert, n_classes).to(device)
+        
+        else:
+            labels = org_labels
+
+        adv_images, queries_by_sample = attack.execute(images, labels, targeted)
+        adv_by_batch.append(adv_images)
+        labels_by_batch.append(labels)
+        queries_by_batch.append(queries_by_sample)
+
+    total_adv_imgs = torch.cat(adv_by_batch)
+    total_labels= torch.cat(labels_by_batch)
+    total_queries_by_sample = torch.cat(queries_by_batch)
+
+    return total_adv_imgs, total_labels, total_queries_by_sample
 
 def compute_attack_success(model, x_adv, y, batch_size, targeted, device):
     """
@@ -88,7 +136,15 @@ def compute_attack_success(model, x_adv, y, batch_size, targeted, device):
     attacks. y contains the true labels in case of untargeted attacks,
     and the target labels in case of targeted attacks.
     """
-    pass # FILL ME
+    x_adv = x_adv.to(device)
+    y = y.to(device)
+
+    model.eval()
+    pred = model(x_adv)
+    top_class_pred = torch.max(pred, dim=1)
+    is_successful = top_class_pred.indices == y if targeted == True else top_class_pred.indices != y
+    correct = is_successful.float().sum()
+    return (correct / x_adv.shape[0])
 
 def binary(num):
     """
@@ -114,3 +170,10 @@ def random_bit_flip(w):
     2- The index of the flipped bit in {0, 1, ..., 31}
     """
     pass # FILL ME
+
+#TODO: Remove!
+def imshow(img):
+    npimg = img.numpy()
+    fig = plt.figure(figsize = (5, 5))
+    plt.imshow(np.transpose(npimg,(1,2,0)))
+    plt.show()

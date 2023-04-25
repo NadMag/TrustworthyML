@@ -43,7 +43,7 @@ for targeted in [False, True]:
     else:
         print(f'\t- untargeted success rate: {sr:0.4f}')
 
-# excecute targeted and untargeted black-box attacks w/ and wo/ momentum
+# # excecute targeted and untargeted black-box attacks w/ and wo/ momentum
 n_queries_all = []
 for momentum in [0, 0.9]:
     for targeted in [False, True]:
