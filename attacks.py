@@ -118,7 +118,7 @@ class NESBBoxPGDAttack:
       2- A vector with dimensionality len(x) containing the number of queries for
           each sample in x.
       """
-      queries_by_sample = torch.zeros(x.shape[0])
+      queries_by_sample = torch.zeros(x.shape[0], device='cuda')
       self.model.eval()
       self.model.requires_grad_(False)
 
@@ -145,7 +145,7 @@ class NESBBoxPGDAttack:
 
           not_reached = 1 - target_reached.int()
           grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
-          queries_by_sample += (not_reached * (2*self.k))
+          queries_by_sample += (not_reached.cuda() * (2*torch.tensor(self.k, device='cuda')))
 
         x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
         x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
@@ -164,9 +164,10 @@ class NESBBoxPGDAttack:
       dist = multivariate_normal.MultivariateNormal(loc=torch.zeros(N), covariance_matrix=torch.eye(N))
       deltas = dist.sample((self.k, x.shape[0]))
       deltas = deltas.reshape((self.k, x.shape[0], x.shape[1], x.shape[2], x.shape[3]))
-      
+      deltas = deltas.to('cuda')
+
       for i in range(self.k):
-        eval_point = x + (self.sigma * deltas[i])
+        eval_point = x + (torch.tensor(self.sigma, device='cuda') * deltas[i])
         outputs = self.model(eval_point)
         loss = self.loss_func(outputs, y)
         grad += loss.reshape(-1, 1, 1, 1) * deltas[i]

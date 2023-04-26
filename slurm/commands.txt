@@ -1,0 +1,25 @@
+#Find python interperter
+which python
+
+#Stream output contents
+tail -f slurm/logs/<file>
+
+#Generate slurm job file
+python slurm/job_generator.py --run --gpu --name vanilla_vae_0 -c ./configs/vanila_slurm.yml
+
+#View old jobs https://curc.readthedocs.io/en/latest/running-jobs/slurm-commands.html
+sacct -u nadavmagar --format=jobid,jobname,start,elapsed,state,exitcode
+
+#clean slurm logs
+rm -rf ./slurm/logs
+
+#clean logs
+rm -rf ./logs
+
+#quque
+squeue
+squeue --me
+sacct -l -j <jobid>
+
+#launch job
+sbatch

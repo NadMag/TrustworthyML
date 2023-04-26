@@ -107,6 +107,7 @@ def run_blackbox_attack(attack, data_loader, targeted, device, n_classes=4):
     adv_by_batch = []
     labels_by_batch = []
     queries_by_batch = []
+    i = 0
 
     for images, org_labels  in data_loader:
         images = images.to(device)
@@ -120,10 +121,12 @@ def run_blackbox_attack(attack, data_loader, targeted, device, n_classes=4):
             labels = org_labels
 
         adv_images, queries_by_sample = attack.execute(images, labels, targeted)
+        print(f'Batch {i}: {queries_by_batch}')
         adv_by_batch.append(adv_images)
         labels_by_batch.append(labels)
         queries_by_batch.append(queries_by_sample)
-
+        i += 1
+        
     total_adv_imgs = torch.cat(adv_by_batch)
     total_labels= torch.cat(labels_by_batch)
     total_queries_by_sample = torch.cat(queries_by_batch)
