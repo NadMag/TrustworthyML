@@ -28,7 +28,7 @@ class PGDAttack:
         self.eps = eps
         self.rand_init = rand_init
         self.early_stop = early_stop
-        self.loss_func = nn.CrossEntropyLoss()#(reduction='none')
+        self.loss_func = nn.CrossEntropyLoss(reduction='none')
 
     def execute(self, x, y, targeted=False):
       """
@@ -52,20 +52,19 @@ class PGDAttack:
       for i in range(self.n) :    
         x_adv.requires_grad = True
         outputs = self.model(x_adv)
+        loss = self.loss_func(outputs, y).mean()
+        grad = torch.autograd.grad(loss, x_adv, retain_graph=False, create_graph=False)[0]
+        grad_sign = -1 if targeted else 1
 
         if (self.early_stop):
           top_class_pred = torch.max(outputs, dim=1)
-          is_done = torch.all(top_class_pred.indices == y) if targeted else torch.all(top_class_pred.indices != y)
+          target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
+          grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+          is_done = torch.all(target_reached)
           if is_done:
             return x_adv
 
-        if (targeted == True):
-          loss = -self.loss_func(outputs, y)#.to(device)
-        else:  
-          loss = self.loss_func(outputs, y)
-
-        grad = torch.autograd.grad(loss, x_adv, retain_graph=False, create_graph=False)[0]
-        x_adv = x_adv.detach() + (self.alpha * torch.sign(grad))
+        x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
         x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
         x_adv = torch.clamp(x_adv, min=0, max=1).detach_()
                   
@@ -107,7 +106,7 @@ class NESBBoxPGDAttack:
         self.sigma=sigma
         self.rand_init = rand_init
         self.early_stop = early_stop
-        self.loss_func = nn.CrossEntropyLoss()#(reduction='none')
+        self.loss_func = nn.CrossEntropyLoss(reduction='none')
 
     def execute(self, x, y, targeted=False):
       """
@@ -120,11 +119,6 @@ class NESBBoxPGDAttack:
           each sample in x.
       """
       queries_by_sample = torch.zeros(x.shape[0])
-      if (targeted == True):
-        loss_fn = lambda o, p: -loss_fn(o, p)
-      else:  
-        loss_fn = self.loss_func
-
       self.model.eval()
       self.model.requires_grad_(False)
 
@@ -138,27 +132,29 @@ class NESBBoxPGDAttack:
 
       for i in range(self.n) :    
         x_adv.requires_grad = False
-        outputs = self.model(x_adv)
+        grad = self._estimate_gradient(x, y)
+        grad_sign = -1 if targeted else 1
 
         if (self.early_stop):
+          outputs = self.model(x_adv)
           top_class_pred = torch.max(outputs, dim=1)
           target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
           is_done = torch.all(target_reached)
           if is_done:
             return x_adv, queries_by_sample
 
-          queries_by_sample = queries_by_sample + ((1 - target_reached.int()) * (2*self.k))
+          not_reached = 1 - target_reached.int()
+          grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+          queries_by_sample += (not_reached * (2*self.k))
 
-        grad = self._estimate_gradient(x, y, loss_fn)
-        x_adv = x_adv.detach() + (self.alpha * torch.sign(grad))
+        x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
         x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
         x_adv = torch.clamp(x_adv, min=0, max=1).detach_()
                   
       return x_adv, queries_by_sample
 
 
-
-    def _estimate_gradient(self, x, y, loss_fn):
+    def _estimate_gradient(self, x, y):
       """
       Esitmate the gradient of the conitional class probability P[y|x] given class y and image x,
       using NES as described in [Ilyas et. al. (18)]
@@ -168,13 +164,17 @@ class NESBBoxPGDAttack:
       dist = multivariate_normal.MultivariateNormal(loc=torch.zeros(N), covariance_matrix=torch.eye(N))
       deltas = dist.sample((self.k, x.shape[0]))
       deltas = deltas.reshape((self.k, x.shape[0], x.shape[1], x.shape[2], x.shape[3]))
-      deltas = torch.cat([deltas, torch.flip(deltas, dims=[1])])
       
-      for i in range(self.k * 2):
+      for i in range(self.k):
         eval_point = x + (self.sigma * deltas[i])
         outputs = self.model(eval_point)
-        loss = loss_fn(outputs, y)
-        grad += loss * deltas[i]
+        loss = self.loss_func(outputs, y)
+        grad += loss.reshape(-1, 1, 1, 1) * deltas[i]
+        #antithetic sampling
+        eval_point = x - (self.sigma * deltas[i])
+        outputs = self.model(eval_point)
+        loss = self.loss_func(outputs, y)
+        grad -= loss.reshape(-1, 1, 1, 1) * deltas[i]
 
       return grad / (self.k * 2 * self.sigma)
 
