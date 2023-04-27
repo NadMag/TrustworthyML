@@ -118,40 +118,44 @@ class NESBBoxPGDAttack:
       2- A vector with dimensionality len(x) containing the number of queries for
           each sample in x.
       """
-      queries_by_sample = torch.zeros(x.shape[0])
-      self.model.eval()
-      self.model.requires_grad_(False)
+      with torch.no_grad():
+        queries_by_sample = torch.zeros(x.shape[0])
+        self.model.eval()
+        self.model.requires_grad_(False)
 
-      x_org = x.clone().detach()
-      x_adv = x.clone().detach()
-      y = y.clone().detach()
+        x_org = x.clone().detach()
+        x_adv = x.clone().detach()
+        y = y.clone().detach()
 
-      if (self.rand_init):
-        pertrubation = torch.empty_like(x_adv).uniform_(-self.eps, self.eps)
-        x_adv = torch.clamp(x+pertrubation, min=0, max=1).detach()
+        if (self.rand_init):
+          pertrubation = torch.empty_like(x_adv).uniform_(-self.eps, self.eps)
+          x_adv = torch.clamp(x+pertrubation, min=0, max=1).detach()
 
-      for i in range(self.n) :    
-        x_adv.requires_grad = False
-        grad = self._estimate_gradient(x, y)
-        grad_sign = -1 if targeted else 1
+        for i in range(self.n) :    
+          x_adv.requires_grad = False
 
-        if (self.early_stop):
-          outputs = self.model(x_adv)
-          top_class_pred = torch.max(outputs, dim=1)
-          target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
-          is_done = torch.all(target_reached)
-          if is_done:
-            return x_adv, queries_by_sample
+          if (self.early_stop):
+            outputs = self.model(x_adv)
+            top_class_pred = torch.max(outputs, dim=1)
+            target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
+            is_done = torch.all(target_reached)
+            if is_done:
+              return x_adv, queries_by_sample
 
-          not_reached = 1 - target_reached.int()
-          grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
-          queries_by_sample += (not_reached * (2*self.k))
+            not_reached = 1 - target_reached.int()
+            queries_by_sample += (not_reached * (2*self.k))
+          
+          grad = self._estimate_gradient(x_adv, y)
+          if (self.early_stop):
+            grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+            
+          grad_sign = -1 if targeted else 1
 
-        x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
-        x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
-        x_adv = torch.clamp(x_adv, min=0, max=1).detach_()
-                  
-      return x_adv, queries_by_sample
+          x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
+          x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
+          x_adv = torch.clamp(x_adv, min=0, max=1).detach_()
+                    
+        return x_adv, queries_by_sample
 
 
     def _estimate_gradient(self, x, y):
@@ -159,25 +163,26 @@ class NESBBoxPGDAttack:
       Esitmate the gradient of the conitional class probability P[y|x] given class y and image x,
       using NES as described in [Ilyas et. al. (18)]
       """
-      grad = 0
-      N = x.shape[1] * x.shape[2] * x.shape[3]
-      dist = multivariate_normal.MultivariateNormal(loc=torch.zeros(N), covariance_matrix=torch.eye(N))
-      deltas = dist.sample((self.k, x.shape[0]))
-      deltas = deltas.reshape((self.k, x.shape[0], x.shape[1], x.shape[2], x.shape[3]))
-      
-      for i in range(self.k):
-        eval_point = x + (self.sigma * deltas[i])
-        outputs = self.model(eval_point)
-        loss = self.loss_func(outputs, y)
-        grad += loss.reshape(-1, 1, 1, 1) * deltas[i]
-        #antithetic sampling
-        eval_point = x - (self.sigma * deltas[i])
-        outputs = self.model(eval_point)
-        loss = self.loss_func(outputs, y)
-        grad -= loss.reshape(-1, 1, 1, 1) * deltas[i]
+      with torch.no_grad():
+        grad = torch.zeros_like(x)
+        # N = x.shape[1] * x.shape[2] * x.shape[3]
+        # dist = multivariate_normal.MultivariateNormal(loc=torch.zeros(N), covariance_matrix=torch.eye(N))
+        # deltas = dist.sample((self.k, x.shape[0]))
+        # deltas = deltas.reshape((self.k, x.shape[0], x.shape[1], x.shape[2], x.shape[3]))
+        
+        for i in range(self.k):
+          delta = torch.randn_like(x)
+          eval_point = x + (self.sigma * delta) #deltas[i])
+          outputs = self.model(eval_point)
+          loss = self.loss_func(outputs, y)
+          grad += loss.reshape(-1, 1, 1, 1) * delta#deltas[i]
+          #antithetic sampling
+          eval_point = x - (self.sigma * delta)#s[i])
+          outputs = self.model(eval_point)
+          loss = self.loss_func(outputs, y)
+          grad -= loss.reshape(-1, 1, 1, 1) * delta#s[i]
 
-      return grad / (self.k * 2 * self.sigma)
-
+        return grad / (self.k * 2 * self.sigma)
 
 class PGDEnsembleAttack:
     """
