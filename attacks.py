@@ -148,7 +148,12 @@ class NESBBoxPGDAttack:
           grad = self._estimate_gradient(x_adv, y)
           if (self.early_stop):
             grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+
+          if (self.momentum != 0):
+            if (i != 0):
+              grad = self.momentum*prev_grad + (1-self.momentum)*grad
             
+            prev_grad = grad   
           grad_sign = -1 if targeted else 1
 
           x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
