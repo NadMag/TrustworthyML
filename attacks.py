@@ -57,12 +57,13 @@ class PGDAttack:
         grad_sign = -1 if targeted else 1
 
         if (self.early_stop):
-          top_class_pred = torch.max(outputs, dim=1)
-          target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
-          grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
-          is_done = torch.all(target_reached)
-          if is_done:
-            return x_adv
+          with torch.no_grad():
+            top_class_pred = torch.max(outputs, dim=1)
+            target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
+            grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+            is_done = torch.all(target_reached)
+            if is_done:
+              return x_adv
 
         x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
         x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
@@ -216,7 +217,7 @@ class PGDEnsembleAttack:
         self.eps = eps
         self.rand_init = rand_init
         self.early_stop = early_stop
-        self.loss_func = nn.CrossEntropyLoss()
+        self.loss_func = nn.CrossEntropyLoss(reduction='none')
 
     def execute(self, x, y, targeted=False):
       """
@@ -225,4 +226,47 @@ class PGDEnsembleAttack:
       attacks. The method returns the adversarially perturbed samples, which
       lie in the ranges [0, 1] and [x-eps, x+eps].
       """
+      for model in self.models:
+        model.eval()
+        model.requires_grad_(False)
+      
+      x_org = x.clone().detach()
+      x_adv = x.clone().detach()
+      y = y.clone().detach()
 
+      if (self.rand_init):
+        pertrubation = torch.empty_like(x_adv).uniform_(-self.eps, self.eps)
+        x_adv = torch.clamp(x+pertrubation, min=0, max=1).detach()
+
+      for i in range(self.n):
+            
+        loss = torch.zeros(x.shape[0])
+        x_adv.requires_grad = True
+        outputs = []
+        for model in self.models:
+          out = model(x_adv)
+          outputs.append(out)
+          loss += self.loss_func(out, y)
+
+        loss = loss.mean()
+        grad = torch.autograd.grad(loss, x_adv, retain_graph=False, create_graph=False)[0]
+        grad_sign = -1 if targeted else 1
+
+        if (self.early_stop):
+          with torch.no_grad():
+            ensemble_output = torch.zeros_like(x.shape[0], 4)
+            for o in outputs:
+              ensemble_output += nn.Softmax(dim=1)(o)
+
+            top_class_pred = torch.max(ensemble_output, dim=1)
+            target_reached = top_class_pred.indices == y if targeted else top_class_pred.indices != y
+            grad = (1 - target_reached.int()).reshape(-1,1,1,1) * grad
+            is_done = torch.all(target_reached)
+            if is_done:
+              return x_adv
+
+        x_adv = x_adv.detach() + (self.alpha * grad_sign * torch.sign(grad))
+        x_adv = torch.clamp(x_adv, min=(x_org-self.eps), max=(x_org + self.eps))
+        x_adv = torch.clamp(x_adv, min=0, max=1).detach_()
+                  
+      return x_adv

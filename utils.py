@@ -6,8 +6,6 @@ import models
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
-##TODO: Remove!
-import matplotlib.pyplot as plt
 
 def load_pretrained_cnn(cnn_id, n_classes=4, models_dir='trained-models/'):
     """
@@ -120,6 +118,7 @@ def run_blackbox_attack(attack, data_loader, targeted, device, n_classes=4):
             labels = org_labels
 
         adv_images, queries_by_sample = attack.execute(images, labels, targeted)
+        assert(torch.max(torch.abs(adv_images - org_labels)) <= attack.eps)
         adv_by_batch.append(adv_images)
         labels_by_batch.append(labels)
         queries_by_batch.append(queries_by_sample)
@@ -152,7 +151,7 @@ def binary(num):
     binary representation (in big-endian, where the string only
     contains '0' and '1' characters).
     """
-    pass # FILL ME
+    return ''.join('{:0>8b}'.format(c) for c in struct.pack('!f', num))
 
 def float32(binary):
     """
@@ -160,7 +159,7 @@ def float32(binary):
     binary representations of float32 numbers into float32 and returns the
     result.
     """
-    pass # FILL ME
+    return struct.unpack('!f', struct.pack('!I', int(binary, 2)))[0]
 
 def random_bit_flip(w):
     """
@@ -169,11 +168,12 @@ def random_bit_flip(w):
     1- The weight with the bit flipped
     2- The index of the flipped bit in {0, 1, ..., 31}
     """
-    pass # FILL ME
-
-#TODO: Remove!
-def imshow(img):
-    npimg = img.numpy()
-    fig = plt.figure(figsize = (5, 5))
-    plt.imshow(np.transpose(npimg,(1,2,0)))
-    plt.show()
+    binary_repr = binary(w)
+    flip_index = np.random.randint(0, 32)
+    curr_bit_value = binary_repr[flip_index]
+    flipped_value = '0' if curr_bit_value == '1' else '1'
+    parsed_reper = list(binary_repr)
+    parsed_reper[flip_index] = flipped_value
+    flipped_breper = ''.join(parsed_reper)
+    flipped_weight = float32(flipped_breper)
+    return flipped_weight, flip_index
